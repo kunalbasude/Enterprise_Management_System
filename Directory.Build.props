@@ -1,0 +1,31 @@
+<Project>
+
+  <!--
+    MSBuild automatically imports this file into every project below this folder.
+    Settings live here once instead of being copy-pasted into five .csproj files.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+
+    <!-- Compiler tracks nullability; dereferencing a possible-null becomes a warning. -->
+    <Nullable>enable</Nullable>
+
+    <!-- Auto-imports System, System.Linq, System.Collections.Generic, etc. -->
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Warnings are ignored once there are forty of them. Keep the count at zero. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Surface .editorconfig style rules (IDExxxx) during a command-line build. -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591 = "missing XML comment on public member". Docs are generated for
+         Swagger's benefit; demanding a comment on every public member is noise. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>

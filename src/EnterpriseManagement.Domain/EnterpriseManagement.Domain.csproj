@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Domain layer intentionally has NO ProjectReference elements.
+    It is the innermost layer: it must not know that Application,
+    Infrastructure, EF Core or ASP.NET Core exist.
+  -->
+
+</Project>
