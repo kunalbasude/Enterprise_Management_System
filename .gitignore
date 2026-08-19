@@ -1,0 +1,46 @@
+# ---- .NET ----
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+*.userprefs
+project.lock.json
+artifacts/
+TestResults/
+*.trx
+coverage*.json
+coverage*.xml
+*.coverage
+
+# ---- Rider / VS / VS Code ----
+.idea/
+.vs/
+.vscode/*
+!.vscode/extensions.json
+
+# ---- Node / React ----
+node_modules/
+client/dist/
+client/.vite/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ---- Secrets & local config ----
+# NEVER commit real secrets. .env.example is the committed template.
+.env
+.env.*
+!.env.example
+appsettings.Development.local.json
+appsettings.Production.json
+*.pfx
+*.key
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Docker volumes / local data ----
+.postgres-data/
