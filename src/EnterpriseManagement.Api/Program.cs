@@ -1,31 +1,106 @@
+using EnterpriseManagement.Api.Extensions;
 using EnterpriseManagement.Infrastructure;
+using Serilog;
+using Serilog.Events;
 
-var builder = WebApplication.CreateBuilder(args);
+// Bootstrap logger: active before the host is built, so a failure in
+// configuration or DI registration is logged rather than vanishing into a
+// silent crash. Replaced below once configuration is available.
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
 
-// Composition root. One call per layer: Program.cs stays a wiring file and never
-// learns what database or ORM is in use.
-builder.Services.AddInfrastructure(builder.Configuration);
-
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
-var app = builder.Build();
-
-if (app.Environment.IsDevelopment())
+try
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
+    var builder = WebApplication.CreateBuilder(args);
+
+    builder.Host.UseSerilog((context, services, configuration) => configuration
+        .ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .Enrich.WithProperty("Application", "EnterpriseManagement.Api"));
+
+    // Composition root: one call per layer.
+    builder.Services.AddInfrastructure(builder.Configuration);
+
+    builder.Services.AddControllers();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen();
+
+    var app = builder.Build();
+
+    // ---------------------------------------------------------------------
+    // Middleware pipeline. Order is behaviour, not preference.
+    //
+    // 1. Correlation id  - must be first so every log line below carries it.
+    // 2. Request logging - one structured line per request, with the id.
+    // 3. Exception handling - inside logging so failures are still logged with
+    //    their id, outside the endpoint so it catches anything thrown there.
+    // 4. HTTPS redirect  - before auth: no point authenticating a request that
+    //    is about to be redirected.
+    // 5. Authentication  - builds the ClaimsPrincipal.
+    // 6. Authorization   - evaluates policies against it. Cannot precede 5.
+    // 7. Endpoints       - the controller finally runs.
+    // ---------------------------------------------------------------------
+
+    app.UseCorrelationId();
+
+    app.UseSerilogRequestLogging(options =>
+    {
+        // Health checks and successful Swagger asset requests are noise at
+        // Information; a real failure still surfaces at Error.
+        options.GetLevel = (httpContext, elapsed, ex) =>
+            ex is not null || httpContext.Response.StatusCode >= 500
+                ? LogEventLevel.Error
+                : httpContext.Request.Path.StartsWithSegments("/swagger")
+                    ? LogEventLevel.Verbose
+                    : LogEventLevel.Information;
+
+        // NOTE: request headers are deliberately NOT enriched here. The
+        // Authorization header would be captured verbatim, writing bearer
+        // tokens into the log files.
+        options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+        {
+            diagnosticContext.Set("RequestHost", httpContext.Request.Host.Value);
+            diagnosticContext.Set("UserAgent", httpContext.Request.Headers.UserAgent.ToString());
+        };
+    });
+
+    app.UseExceptionHandling();
+
+    if (app.Environment.IsDevelopment())
+    {
+        app.UseSwagger();
+        app.UseSwaggerUI();
+    }
+
+    app.UseHttpsRedirection();
+
+    app.UseAuthorization();
+
+    app.MapControllers();
+
+    Log.Information("Starting Enterprise Management API in {Environment}", app.Environment.EnvironmentName);
+
+    app.Run();
+}
+catch (Exception ex) when (ex is not HostAbortedException)
+{
+    // HostAbortedException is thrown by the EF Core design-time tooling when it
+    // builds the host to read configuration. It is expected, not a failure.
+    Log.Fatal(ex, "Application terminated unexpectedly");
+    throw;
+}
+finally
+{
+    // Serilog buffers; without this a crash can lose the very log lines that
+    // explain it.
+    Log.CloseAndFlush();
 }
 
-app.UseHttpsRedirection();
-app.UseAuthorization();
-app.MapControllers();
-
-app.Run();
-
 /// <summary>
-/// Exposed so the integration test project can reference this entry point with
-/// WebApplicationFactory. Top-level statements generate an internal Program class.
+/// Exposed so integration tests can reference this entry point with
+/// WebApplicationFactory. Top-level statements otherwise generate an internal class.
 /// </summary>
 public partial class Program;
