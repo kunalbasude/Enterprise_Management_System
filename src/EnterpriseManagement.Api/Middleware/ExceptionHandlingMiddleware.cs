@@ -119,6 +119,11 @@ public class ExceptionHandlingMiddleware
             ApplicationValidationException validation =>
                 (StatusCodes.Status400BadRequest, validation.Message, validation.Errors),
 
+            // 401: credentials missing or invalid. Distinct from 403, which
+            // means the identity is known and simply not permitted.
+            UnauthorizedException unauthorized =>
+                (StatusCodes.Status401Unauthorized, unauthorized.Message, null),
+
             // 404: the target does not exist. The domain message names the type
             // and id only — it never echoes arbitrary caller input.
             NotFoundException notFound =>
@@ -133,8 +138,7 @@ public class ExceptionHandlingMiddleware
             BusinessRuleViolationException businessRule =>
                 (StatusCodes.Status422UnprocessableEntity, businessRule.Message, null),
 
-            // 401/403 are produced by the auth middleware, not thrown, so they
-            // do not appear here.
+            // 403 is produced by the authorization middleware, not thrown here.
 
             // The client gave up and disconnected. Not a server fault, and it
             // must not pollute the error rate.

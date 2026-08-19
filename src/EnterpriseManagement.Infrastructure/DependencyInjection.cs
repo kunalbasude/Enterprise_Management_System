@@ -1,8 +1,10 @@
 using EnterpriseManagement.Application.Common.Interfaces;
+using EnterpriseManagement.Infrastructure.Identity;
 using EnterpriseManagement.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace EnterpriseManagement.Infrastructure;
 
@@ -51,6 +53,20 @@ public static class DependencyInjection
         // The .NET 8 clock abstraction. Registering the real one here lets tests
         // substitute a fake without a custom IDateTime interface.
         services.AddSingleton(TimeProvider.System);
+
+        // Bind the Jwt section and validate it at startup rather than on first
+        // use, so a misconfigured deployment fails to boot instead of failing
+        // every login in production.
+        services.AddOptions<JwtSettings>()
+            .Bind(configuration.GetSection(JwtSettings.SectionName))
+            .ValidateOnStart();
+
+        services.AddSingleton<IValidateOptions<JwtSettings>, JwtSettingsValidator>();
+
+        // Stateless and thread-safe, so singletons are correct and avoid
+        // re-allocating per request.
+        services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
+        services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();
 
         return services;
     }

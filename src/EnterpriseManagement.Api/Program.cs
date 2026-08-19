@@ -1,4 +1,8 @@
+using EnterpriseManagement.Api.Authentication;
 using EnterpriseManagement.Api.Extensions;
+using EnterpriseManagement.Api.Filters;
+using EnterpriseManagement.Application;
+using EnterpriseManagement.Application.Common.Interfaces;
 using EnterpriseManagement.Infrastructure;
 using Serilog;
 using Serilog.Events;
@@ -22,11 +26,34 @@ try
         .Enrich.WithProperty("Application", "EnterpriseManagement.Api"));
 
     // Composition root: one call per layer.
+    builder.Services.AddApplication();
     builder.Services.AddInfrastructure(builder.Configuration);
 
-    builder.Services.AddControllers();
+    builder.Services.AddJwtAuthentication(builder.Configuration);
+    builder.Services.AddAuthorization();
+
+    // ICurrentUser reads claims off the request, so it needs the accessor and
+    // must be scoped to the request.
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+
+    builder.Services.AddControllers(options =>
+    {
+        // Global: every action with a registered validator is validated, with
+        // nothing to remember per endpoint.
+        options.Filters.Add<ValidationFilter>();
+    });
+
+    // MVC's built-in ModelState 400 would bypass the exception middleware and
+    // return a different error shape. Suppressed so every failure, validation
+    // included, comes out of one place.
+    builder.Services.Configure<Microsoft.AspNetCore.Mvc.ApiBehaviorOptions>(options =>
+    {
+        options.SuppressModelStateInvalidFilter = true;
+    });
+
     builder.Services.AddEndpointsApiExplorer();
-    builder.Services.AddSwaggerGen();
+    builder.Services.AddSwaggerWithJwt();
 
     var app = builder.Build();
 
@@ -77,6 +104,9 @@ try
 
     app.UseHttpsRedirection();
 
+    // Authentication must precede authorization: a policy cannot be evaluated
+    // against a ClaimsPrincipal that has not been built yet.
+    app.UseAuthentication();
     app.UseAuthorization();
 
     app.MapControllers();
