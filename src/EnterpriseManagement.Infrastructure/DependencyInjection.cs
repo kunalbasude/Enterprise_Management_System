@@ -4,6 +4,7 @@ using EnterpriseManagement.Infrastructure.Identity;
 using EnterpriseManagement.Infrastructure.Persistence;
 using EnterpriseManagement.Infrastructure.Persistence.Seed;
 using EnterpriseManagement.Infrastructure.Search;
+using EnterpriseManagement.Infrastructure.Statistics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -79,6 +80,7 @@ public static class DependencyInjection
 
         // Scoped: depends on the scoped DbContext and per-request caller context.
         services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IDashboardStatisticsProvider, DashboardStatisticsProvider>();
 
         return services;
     }

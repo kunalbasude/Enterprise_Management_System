@@ -1,8 +1,19 @@
-# Employee Search Optimisation
+# Performance Notes
 
 Measured on this project's development machine (Ubuntu 24.04, PostgreSQL 16.15
 in Docker, 100,001 employee rows). Numbers are from actual `EXPLAIN ANALYZE`
-runs, reproducible with the commands below. They are not estimates.
+runs and timed requests, reproducible with the commands below. They are not
+estimates.
+
+Two pieces of work are recorded here:
+
+1. [Employee search](#employee-search-optimisation) — a missing index
+2. [Dashboard aggregation](#dashboard-aggregation) — a bad query plan, and a
+   round-trip assumption that turned out to be mostly wrong
+
+---
+
+# Employee Search Optimisation
 
 ## The problem
 
@@ -179,3 +190,159 @@ EXPLAIN (ANALYZE, BUFFERS) <query>;
 To see the SQL EF Core generates, set
 `Microsoft.EntityFrameworkCore.Database.Command` to `Information` in
 `appsettings.Development.json` — already configured in this project.
+
+---
+
+# Dashboard Aggregation
+
+`GET /api/dashboard/summary` returns eleven figures across four tables. Two
+separate questions came up, and only one of them mattered.
+
+## Question 1: does one statement beat eleven?
+
+The textbook answer is that eleven `CountAsync` calls cost eleven round-trips,
+so combining them into one statement is a large win. Measured on this machine,
+against 100,001 employees, warm cache, two runs:
+
+| | run 1 | run 2 | average |
+|---|---|---|---|
+| Eleven separate statements | 21.25 ms | 20.01 ms | **20.6 ms** |
+| One combined statement | 17.15 ms | 16.74 ms | **17.0 ms** |
+
+**About 18% faster — far less than the design implies.** The database does
+roughly the same work either way; combining them saves parsing and planning
+overhead, not scanning.
+
+The round-trip argument is still real, but it is about *latency*, not CPU, and
+on a loopback connection there is almost none to save. The honest version of the
+claim is arithmetic rather than a measurement: at a 5 ms network round-trip
+between application and database — an ordinary figure across availability zones
+— eleven statements add roughly 55 ms of pure waiting to the first screen every
+user loads, and one statement adds roughly 5 ms. That is worth having, but it is
+not what made this endpoint slow.
+
+## Question 2: why was a manager's dashboard slower than an administrator's?
+
+This was the real problem, and it was found only by timing every role rather
+than assuming the largest scope was the slowest.
+
+| Caller | First implementation |
+|---|---|
+| ADMIN (sees everything) | 107 ms |
+| MANAGER alice | **583 ms** |
+| MANAGER bob | 308 ms |
+| EMPLOYEE worker | 324 ms |
+
+A manager sees two employees and one project. Taking five times longer than the
+administrator makes no sense.
+
+### Cause
+
+The first implementation expressed scope as a parameter inside one statement:
+
+```sql
+WHERE @is_admin
+   OR e.id = @employee_id
+   OR EXISTS (SELECT 1 FROM project_employees pe WHERE pe.employee_id = e.id AND ...)
+```
+
+`EXPLAIN ANALYZE` on the scoped path:
+
+```
+Aggregate  (actual time=123.123..123.126 rows=1 loops=1)
+  ->  Seq Scan on employees e  (actual time=123.097..123.103 rows=2 loops=1)
+        Rows Removed by Filter: 100001
+Execution Time: 142.835 ms
+```
+
+**A sequential scan of 100,001 rows to return 2.** PostgreSQL plans the statement
+before it knows the parameter values, so an `OR` against a parameter cannot use
+an index — the planner has to assume `@is_admin` might be true and prepare to
+return everything.
+
+### Fix
+
+Two things, both structural rather than clever:
+
+1. **Separate statements per scope**, chosen in C# by `isAdmin`. Each gets a plan
+   suited to its case. Still exactly one round-trip either way.
+2. **Drive from the small table.** Project membership is tiny, so the scoped
+   statement collects employee ids from `project_employees` and joins into
+   `employees` by primary key, instead of scanning `employees` and testing each
+   row.
+
+```sql
+visible_employee_ids AS (
+    SELECT pe.employee_id AS id
+    FROM project_employees pe
+    WHERE pe.unassigned_at IS NULL
+      AND pe.project_id IN (SELECT id FROM visible_projects)
+    UNION
+    SELECT @employee_id
+),
+visible_employees AS (
+    SELECT e.id, e.is_active, e.department_id
+    FROM employees e
+    JOIN visible_employee_ids v ON v.id = e.id
+)
+```
+
+### Result
+
+End-to-end through the API, best of three runs each, including JSON
+serialisation and HTTP:
+
+| Caller | Before | After | Change |
+|---|---|---|---|
+| ADMIN | 107 ms | **43.4 ms** | 2.5x |
+| MANAGER alice | 583 ms | **2.8 ms** | **~200x** |
+| MANAGER bob | 308 ms | **2.5 ms** | ~120x |
+| EMPLOYEE worker | 324 ms | **2.7 ms** | ~120x |
+
+Every figure is identical before and after, so the speedup is not the result of
+computing less.
+
+The administrator case also improved, from 107 ms to 43 ms, because its
+statement now carries no predicates at all — just aggregates over whole tables.
+
+## What is still slow, and why that is honest
+
+43 ms for the administrator is not fast, and it is inherent: `count(*)` over
+100,001 rows has to visit them. Options, none of them implemented here:
+
+- **Cache the summary** for 30-60 seconds. A dashboard figure that is a minute
+  stale is almost never a problem, and this removes the cost entirely.
+- **Use `pg_class.reltuples`** for an approximate total. Fast, and wrong by a few
+  rows between vacuums.
+- **Maintain counters** in a summary table, updated by trigger or by the
+  application. Fastest to read, and now you own a cache-invalidation problem.
+
+Each is a real trade-off rather than a free win, which is why the exact count
+stands at this scale.
+
+## Reproducing
+
+```bash
+# Compare eleven statements against one
+docker exec -i ems-postgres psql -U ems_user -d enterprise_management < /tmp/dash-bench.sql
+
+# Inspect the scoped plan
+docker exec -i ems-postgres psql -U ems_user -d enterprise_management -c "
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT count(*) FROM employees e
+WHERE false OR e.id = 100005
+   OR EXISTS (SELECT 1 FROM project_employees pe WHERE pe.employee_id = e.id AND pe.unassigned_at IS NULL);"
+
+# Time the endpoint per role
+curl -s -w '%{time_total}s\n' -H "Authorization: Bearer $TOKEN" \
+     http://localhost:5080/api/dashboard/summary
+```
+
+## The lesson worth keeping
+
+The optimisation everyone expects to matter — batching eleven queries into one —
+was worth 18%. The one nobody was looking for — a parameterised `OR` destroying
+the query plan — was worth two orders of magnitude, and was only visible because
+every role was timed instead of just the largest one.
+
+Measure the slow case, not the case you assume is slow.
