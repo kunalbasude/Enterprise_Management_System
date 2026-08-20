@@ -3,6 +3,7 @@ using EnterpriseManagement.Application.Features.Auth.Services;
 using EnterpriseManagement.Application.Features.Departments.Services;
 using EnterpriseManagement.Application.Features.Employees.Services;
 using EnterpriseManagement.Application.Features.Projects.Services;
+using EnterpriseManagement.Application.Features.Tasks.Services;
 using EnterpriseManagement.Application.Features.Users.Services;
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,6 +26,7 @@ public static class DependencyInjection
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IEmployeeService, EmployeeService>();
         services.AddScoped<IProjectService, ProjectService>();
+        services.AddScoped<ITaskService, TaskService>();
 
         return services;
     }

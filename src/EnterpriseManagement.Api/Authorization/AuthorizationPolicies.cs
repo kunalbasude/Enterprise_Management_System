@@ -56,6 +56,7 @@ public static class AuthorizationPolicies
         // Resource-based handlers. Scoped because ProjectAuthorizationHandler
         // depends on ICurrentUser, which is per-request.
         services.AddScoped<IAuthorizationHandler, ProjectAuthorizationHandler>();
+        services.AddScoped<IAuthorizationHandler, TaskAuthorizationHandler>();
 
         return services;
     }
