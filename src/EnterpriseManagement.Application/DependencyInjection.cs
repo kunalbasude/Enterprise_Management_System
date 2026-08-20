@@ -1,6 +1,7 @@
 using System.Reflection;
 using EnterpriseManagement.Application.Features.Auth.Services;
 using EnterpriseManagement.Application.Features.Departments.Services;
+using EnterpriseManagement.Application.Features.Users.Services;
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -19,6 +20,7 @@ public static class DependencyInjection
         // capture a disposed context on the second request.
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IDepartmentService, DepartmentService>();
+        services.AddScoped<IUserService, UserService>();
 
         return services;
     }
