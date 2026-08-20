@@ -1,6 +1,7 @@
 using EnterpriseManagement.Application.Common.Interfaces;
 using EnterpriseManagement.Infrastructure.Identity;
 using EnterpriseManagement.Infrastructure.Persistence;
+using EnterpriseManagement.Infrastructure.Persistence.Seed;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -67,6 +68,9 @@ public static class DependencyInjection
         // re-allocating per request.
         services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
         services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();
+
+        // Scoped: it uses the scoped AppDbContext.
+        services.AddScoped<DatabaseSeeder>();
 
         return services;
     }

@@ -1,9 +1,11 @@
 using EnterpriseManagement.Api.Authentication;
+using EnterpriseManagement.Api.Authorization;
 using EnterpriseManagement.Api.Extensions;
 using EnterpriseManagement.Api.Filters;
 using EnterpriseManagement.Application;
 using EnterpriseManagement.Application.Common.Interfaces;
 using EnterpriseManagement.Infrastructure;
+using EnterpriseManagement.Infrastructure.Persistence.Seed;
 using Serilog;
 using Serilog.Events;
 
@@ -30,7 +32,7 @@ try
     builder.Services.AddInfrastructure(builder.Configuration);
 
     builder.Services.AddJwtAuthentication(builder.Configuration);
-    builder.Services.AddAuthorization();
+    builder.Services.AddApplicationAuthorization();
 
     // ICurrentUser reads claims off the request, so it needs the accessor and
     // must be scoped to the request.
@@ -110,6 +112,15 @@ try
     app.UseAuthorization();
 
     app.MapControllers();
+
+    // Seed the bootstrap administrator, if configured. Runs in its own scope
+    // because the seeder depends on the scoped DbContext and there is no
+    // request scope during startup.
+    using (var scope = app.Services.CreateScope())
+    {
+        var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
+        await seeder.SeedAsync();
+    }
 
     Log.Information("Starting Enterprise Management API in {Environment}", app.Environment.EnvironmentName);
 
