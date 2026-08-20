@@ -33,6 +33,36 @@ public class ValidationFilter : IAsyncActionFilter
     {
         var errors = new Dictionary<string, string[]>();
 
+        // Model binding failures first.
+        //
+        // ApiBehaviorOptions.SuppressModelStateInvalidFilter is enabled so that
+        // MVC's built-in 400 does not bypass the exception middleware and return
+        // a different error shape. The catch is that suppressing it also
+        // discards BINDING errors, not just validation ones -- so a request like
+        // ?status=abc or ?status=99 would silently bind to null and return
+        // unfiltered results, with the caller never told their filter was
+        // ignored. Surfacing them here keeps one error shape without losing them.
+        if (!context.ModelState.IsValid)
+        {
+            foreach (var entry in context.ModelState)
+            {
+                if (entry.Value.Errors.Count == 0)
+                {
+                    continue;
+                }
+
+                var key = string.IsNullOrEmpty(entry.Key) ? "request" : entry.Key;
+
+                errors[key] = entry.Value.Errors
+                    // Exception messages from a binder can expose type internals,
+                    // so a generic message is used when one is absent.
+                    .Select(e => string.IsNullOrWhiteSpace(e.ErrorMessage)
+                        ? "The supplied value is not valid for this field."
+                        : e.ErrorMessage)
+                    .ToArray();
+            }
+        }
+
         foreach (var argument in context.ActionArguments.Values)
         {
             if (argument is null)

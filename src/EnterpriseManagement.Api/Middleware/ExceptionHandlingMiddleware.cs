@@ -124,6 +124,11 @@ public class ExceptionHandlingMiddleware
             UnauthorizedException unauthorized =>
                 (StatusCodes.Status401Unauthorized, unauthorized.Message, null),
 
+            // 403: identity known, action not permitted on this resource.
+            // Re-authenticating cannot help, which is what separates it from 401.
+            ForbiddenException forbidden =>
+                (StatusCodes.Status403Forbidden, forbidden.Message, null),
+
             // 404: the target does not exist. The domain message names the type
             // and id only — it never echoes arbitrary caller input.
             NotFoundException notFound =>
@@ -137,8 +142,6 @@ public class ExceptionHandlingMiddleware
             // 400 because retrying the identical payload can never succeed.
             BusinessRuleViolationException businessRule =>
                 (StatusCodes.Status422UnprocessableEntity, businessRule.Message, null),
-
-            // 403 is produced by the authorization middleware, not thrown here.
 
             // The client gave up and disconnected. Not a server fault, and it
             // must not pollute the error rate.

@@ -23,5 +23,24 @@ services:
       timeout: 5s
       retries: 10
 
+  # Development-only database browser. The PostgreSQL counterpart to
+  # phpMyAdmin, which only speaks MySQL and cannot connect to this database.
+  #
+  # Bound to 127.0.0.1 so it is reachable from this machine only. It must never
+  # be exposed in a real deployment: it offers unauthenticated access to
+  # whoever can reach the port, and grants full SQL over the database.
+  adminer:
+    image: adminer:4-standalone
+    container_name: ems-adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+      ADMINER_DESIGN: dracula
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   postgres-data:
