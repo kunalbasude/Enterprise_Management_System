@@ -1,4 +1,5 @@
 using EnterpriseManagement.Application.Common.Interfaces;
+using EnterpriseManagement.Infrastructure.Auditing;
 using EnterpriseManagement.Infrastructure.Identity;
 using EnterpriseManagement.Infrastructure.Persistence;
 using EnterpriseManagement.Infrastructure.Persistence.Seed;
@@ -75,6 +76,9 @@ public static class DependencyInjection
 
         // Provider-specific search, declared by Application and implemented here.
         services.AddSingleton<IEmployeeSearch, PostgresEmployeeSearch>();
+
+        // Scoped: depends on the scoped DbContext and per-request caller context.
+        services.AddScoped<IAuditService, AuditService>();
 
         return services;
     }

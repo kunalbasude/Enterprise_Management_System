@@ -1,5 +1,6 @@
 using System.Reflection;
 using EnterpriseManagement.Application.Features.Auth.Services;
+using EnterpriseManagement.Application.Features.AuditLogs.Services;
 using EnterpriseManagement.Application.Features.Departments.Services;
 using EnterpriseManagement.Application.Features.Employees.Services;
 using EnterpriseManagement.Application.Features.Projects.Services;
@@ -27,6 +28,7 @@ public static class DependencyInjection
         services.AddScoped<IEmployeeService, EmployeeService>();
         services.AddScoped<IProjectService, ProjectService>();
         services.AddScoped<ITaskService, TaskService>();
+        services.AddScoped<IAuditLogQueryService, AuditLogQueryService>();
 
         return services;
     }

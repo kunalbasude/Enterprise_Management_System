@@ -17,6 +17,7 @@ public class ProjectService : IProjectService
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUser _currentUser;
     private readonly TimeProvider _timeProvider;
+    private readonly IAuditService _auditService;
     private readonly ILogger<ProjectService> _logger;
 
     private static readonly Dictionary<string, Expression<Func<ProjectListDto, object>>> SortMap =
@@ -34,11 +35,13 @@ public class ProjectService : IProjectService
         IApplicationDbContext context,
         ICurrentUser currentUser,
         TimeProvider timeProvider,
+        IAuditService auditService,
         ILogger<ProjectService> logger)
     {
         _context = context;
         _currentUser = currentUser;
         _timeProvider = timeProvider;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -211,6 +214,13 @@ public class ProjectService : IProjectService
             "Created project {ProjectId} ({ProjectCode}) managed by employee {ManagerEmployeeId}",
             project.Id, code, request.ManagerEmployeeId);
 
+        await _auditService.LogAsync(
+            AuditAction.Created,
+            nameof(Project),
+            project.Id,
+            new { project.Name, project.Code, Status = project.Status.ToString(), project.ManagerEmployeeId },
+            cancellationToken: cancellationToken);
+
         return await GetByIdAsync(project.Id, cancellationToken);
     }
 
@@ -243,6 +253,15 @@ public class ProjectService : IProjectService
                 "Project {ProjectId} reassigned from employee {OldManager} to {NewManager} by user {ActorId}",
                 id, project.ManagerEmployeeId, request.ManagerEmployeeId, _currentUser.UserId);
 
+            // Reassignment is the highest-privilege change here, so it gets its
+            // own audit entry rather than being buried in a general update.
+            await _auditService.LogAsync(
+                AuditAction.Updated,
+                "ProjectOwnership",
+                id,
+                new { PreviousManagerEmployeeId = project.ManagerEmployeeId, NewManagerEmployeeId = request.ManagerEmployeeId },
+                cancellationToken: cancellationToken);
+
             project.ManagerEmployeeId = request.ManagerEmployeeId;
         }
 
@@ -255,6 +274,13 @@ public class ProjectService : IProjectService
         await _context.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Updated project {ProjectId}", id);
+
+        await _auditService.LogAsync(
+            AuditAction.Updated,
+            nameof(Project),
+            id,
+            new { project.Name, Status = project.Status.ToString(), project.StartDate, project.EndDate },
+            cancellationToken: cancellationToken);
 
         return await GetByIdAsync(id, cancellationToken);
     }
@@ -284,6 +310,13 @@ public class ProjectService : IProjectService
         await _context.SaveChangesAsync(cancellationToken);
 
         _logger.LogWarning("Deleted project {ProjectId} by user {ActorId}", id, _currentUser.UserId);
+
+        await _auditService.LogAsync(
+            AuditAction.Deleted,
+            nameof(Project),
+            id,
+            new { project.Name, project.Code },
+            cancellationToken: cancellationToken);
     }
 
     public async Task<IReadOnlyList<ProjectMemberDto>> GetMembersAsync(
@@ -378,6 +411,13 @@ public class ProjectService : IProjectService
             "Assigned employee {EmployeeId} to project {ProjectId} as {RoleOnProject}",
             request.EmployeeId, projectId, assignment.RoleOnProject);
 
+        await _auditService.LogAsync(
+            AuditAction.Assigned,
+            nameof(ProjectEmployee),
+            assignment.Id,
+            new { ProjectId = projectId, request.EmployeeId, employee.EmployeeCode, assignment.RoleOnProject },
+            cancellationToken: cancellationToken);
+
         return new ProjectMemberDto
         {
             AssignmentId = assignment.Id,
@@ -414,6 +454,13 @@ public class ProjectService : IProjectService
 
         _logger.LogInformation(
             "Unassigned employee {EmployeeId} from project {ProjectId}", employeeId, projectId);
+
+        await _auditService.LogAsync(
+            AuditAction.Unassigned,
+            nameof(ProjectEmployee),
+            assignment.Id,
+            new { ProjectId = projectId, EmployeeId = employeeId },
+            cancellationToken: cancellationToken);
     }
 
     private async Task EnsureManagerExistsAsync(int managerEmployeeId, CancellationToken cancellationToken)

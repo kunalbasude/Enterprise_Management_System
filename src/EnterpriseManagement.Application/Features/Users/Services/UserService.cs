@@ -5,6 +5,7 @@ using EnterpriseManagement.Application.Common.Models;
 using EnterpriseManagement.Application.Features.Users.Dtos;
 using EnterpriseManagement.Domain.Common;
 using EnterpriseManagement.Domain.Entities;
+using EnterpriseManagement.Domain.Enums;
 using EnterpriseManagement.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -17,6 +18,7 @@ public class UserService : IUserService
     private readonly IPasswordHasher _passwordHasher;
     private readonly ICurrentUser _currentUser;
     private readonly TimeProvider _timeProvider;
+    private readonly IAuditService _auditService;
     private readonly ILogger<UserService> _logger;
 
     private static readonly Dictionary<string, Expression<Func<UserListDto, object>>> SortMap =
@@ -35,12 +37,14 @@ public class UserService : IUserService
         IPasswordHasher passwordHasher,
         ICurrentUser currentUser,
         TimeProvider timeProvider,
+        IAuditService auditService,
         ILogger<UserService> logger)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _currentUser = currentUser;
         _timeProvider = timeProvider;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -139,6 +143,13 @@ public class UserService : IUserService
             "Admin {ActorId} created user {UserId} with roles {Roles}",
             _currentUser.UserId, user.Id, string.Join(",", roles.Select(r => r.Name)));
 
+        await _auditService.LogAsync(
+            AuditAction.Created,
+            nameof(User),
+            user.Id,
+            new { user.Email, Roles = roles.Select(r => r.Name), Source = "admin-created" },
+            cancellationToken: cancellationToken);
+
         return await GetByIdAsync(user.Id, cancellationToken);
     }
 
@@ -175,6 +186,13 @@ public class UserService : IUserService
 
         _logger.LogInformation("Admin {ActorId} updated user {UserId}", _currentUser.UserId, id);
 
+        await _auditService.LogAsync(
+            AuditAction.Updated,
+            nameof(User),
+            id,
+            new { user.Email, user.FullName, user.IsActive },
+            cancellationToken: cancellationToken);
+
         return await GetByIdAsync(id, cancellationToken);
     }
 
@@ -197,6 +215,10 @@ public class UserService : IUserService
             await GuardLastActiveAdminAsync(user, removingAdmin: true, cancellationToken);
         }
 
+        // Captured before the collection is cleared, so the audit entry can
+        // record what the roles WERE as well as what they became.
+        var previousRoles = user.UserRoles.Select(ur => ur.Role.Name).ToList();
+
         var now = _timeProvider.GetUtcNow().UtcDateTime;
 
         // Replace wholesale: the request states the complete desired set, which
@@ -214,6 +236,16 @@ public class UserService : IUserService
         _logger.LogWarning(
             "Admin {ActorId} changed roles for user {UserId} to {Roles}",
             _currentUser.UserId, id, string.Join(",", requested.Select(r => r.Name)));
+
+        // Records both sides of the change. "Was admin, now employee" is the
+        // question an investigation actually asks; the new value alone does not
+        // answer it.
+        await _auditService.LogAsync(
+            AuditAction.Updated,
+            "UserRoles",
+            id,
+            new { PreviousRoles = previousRoles, NewRoles = requested.Select(r => r.Name) },
+            cancellationToken: cancellationToken);
 
         return await GetByIdAsync(id, cancellationToken);
     }
@@ -233,6 +265,16 @@ public class UserService : IUserService
         // A security event worth surfacing at Warning: an administrative reset
         // is indistinguishable from an account takeover if nobody is watching.
         _logger.LogWarning("Admin {ActorId} reset the password for user {UserId}", _currentUser.UserId, id);
+
+        // Records THAT a reset happened, never the new password. An
+        // administrative reset is indistinguishable from an account takeover
+        // unless it leaves a trail.
+        await _auditService.LogAsync(
+            AuditAction.Updated,
+            "UserPassword",
+            id,
+            new { Method = "admin-reset" },
+            cancellationToken: cancellationToken);
     }
 
     public async Task ChangeOwnPasswordAsync(
@@ -261,6 +303,14 @@ public class UserService : IUserService
         await _context.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("User {UserId} changed their own password", userId);
+
+        await _auditService.LogAsync(
+            AuditAction.Updated,
+            "UserPassword",
+            userId,
+            new { Method = "self-service" },
+            userIdOverride: userId,
+            cancellationToken: cancellationToken);
     }
 
     public async Task DeleteAsync(int id, CancellationToken cancellationToken = default)
@@ -284,6 +334,15 @@ public class UserService : IUserService
         await _context.SaveChangesAsync(cancellationToken);
 
         _logger.LogWarning("Admin {ActorId} deleted user {UserId}", _currentUser.UserId, id);
+
+        // Written after the delete, and survives it: audit_logs.user_id is
+        // SET NULL, while UserEmail is denormalised so the row stays readable.
+        await _auditService.LogAsync(
+            AuditAction.Deleted,
+            nameof(User),
+            id,
+            new { DeletedEmail = user.Email, DeletedRoles = user.UserRoles.Select(ur => ur.Role.Name) },
+            cancellationToken: cancellationToken);
     }
 
     private IQueryable<UserListDto> ProjectSingle(int id) =>

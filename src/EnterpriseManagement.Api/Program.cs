@@ -38,6 +38,7 @@ try
     // must be scoped to the request.
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+    builder.Services.AddScoped<IRequestContext, RequestContext>();
 
     builder.Services.AddControllers(options =>
     {

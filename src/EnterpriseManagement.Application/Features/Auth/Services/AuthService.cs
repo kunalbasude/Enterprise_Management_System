@@ -2,6 +2,7 @@ using EnterpriseManagement.Application.Common.Interfaces;
 using EnterpriseManagement.Application.Features.Auth.Dtos;
 using EnterpriseManagement.Domain.Common;
 using EnterpriseManagement.Domain.Entities;
+using EnterpriseManagement.Domain.Enums;
 using EnterpriseManagement.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -14,6 +15,7 @@ public class AuthService : IAuthService
     private readonly IPasswordHasher _passwordHasher;
     private readonly IJwtTokenGenerator _tokenGenerator;
     private readonly TimeProvider _timeProvider;
+    private readonly IAuditService _auditService;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
@@ -21,12 +23,14 @@ public class AuthService : IAuthService
         IPasswordHasher passwordHasher,
         IJwtTokenGenerator tokenGenerator,
         TimeProvider timeProvider,
+        IAuditService auditService,
         ILogger<AuthService> logger)
     {
         _context = context;
         _passwordHasher = passwordHasher;
         _tokenGenerator = tokenGenerator;
         _timeProvider = timeProvider;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -80,6 +84,17 @@ public class AuthService : IAuthService
 
         _logger.LogInformation("Registered new user {UserId} with role {Role}", user.Id, RoleNames.Employee);
 
+        // Only the email and granted role are recorded. The submitted password
+        // is never handed to the audit service at all.
+        await _auditService.LogAsync(
+            AuditAction.Created,
+            nameof(User),
+            user.Id,
+            new { user.Email, Roles = new[] { RoleNames.Employee }, Source = "self-registration" },
+            userIdOverride: user.Id,
+            userEmailOverride: user.Email,
+            cancellationToken: cancellationToken);
+
         return BuildAuthResponse(user, [RoleNames.Employee], employeeId: null);
     }
 
@@ -110,12 +125,34 @@ public class AuthService : IAuthService
                 email,
                 ipAddress ?? "unknown");
 
+            // Recorded although nobody is authenticated: a burst of these across
+            // many addresses is what credential stuffing looks like, and it is
+            // invisible without an audit row.
+            await _auditService.LogAsync(
+                AuditAction.LoginFailed,
+                nameof(User),
+                user?.Id,
+                new { AttemptedEmail = email, Reason = user is null ? "unknown account" : "incorrect password" },
+                userIdOverride: user?.Id,
+                userEmailOverride: email,
+                cancellationToken: cancellationToken);
+
             throw new UnauthorizedException("Invalid email or password.");
         }
 
         if (!user.IsActive)
         {
             _logger.LogWarning("Login attempt on disabled account {UserId}", user.Id);
+
+            await _auditService.LogAsync(
+                AuditAction.LoginFailed,
+                nameof(User),
+                user.Id,
+                new { AttemptedEmail = email, Reason = "account disabled" },
+                userIdOverride: user.Id,
+                userEmailOverride: email,
+                cancellationToken: cancellationToken);
+
             throw new UnauthorizedException("Invalid email or password.");
         }
 
@@ -125,6 +162,17 @@ public class AuthService : IAuthService
         var roles = user.UserRoles.Select(ur => ur.Role.Name).ToList();
 
         _logger.LogInformation("User {UserId} logged in from {IpAddress}", user.Id, ipAddress ?? "unknown");
+
+        // The issued token is NOT recorded. An audit row containing a valid JWT
+        // would hand anyone with log access a working credential.
+        await _auditService.LogAsync(
+            AuditAction.Login,
+            nameof(User),
+            user.Id,
+            new { Roles = roles },
+            userIdOverride: user.Id,
+            userEmailOverride: user.Email,
+            cancellationToken: cancellationToken);
 
         return BuildAuthResponse(user, roles, user.Employee?.Id);
     }

@@ -17,6 +17,7 @@ public class TaskService : ITaskService
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUser _currentUser;
     private readonly TimeProvider _timeProvider;
+    private readonly IAuditService _auditService;
     private readonly ILogger<TaskService> _logger;
 
     private static readonly Dictionary<string, Expression<Func<TaskListDto, object>>> SortMap =
@@ -35,11 +36,13 @@ public class TaskService : ITaskService
         IApplicationDbContext context,
         ICurrentUser currentUser,
         TimeProvider timeProvider,
+        IAuditService auditService,
         ILogger<TaskService> logger)
     {
         _context = context;
         _currentUser = currentUser;
         _timeProvider = timeProvider;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -249,6 +252,13 @@ public class TaskService : ITaskService
             "Created task {TaskId} in project {ProjectId} assigned to {AssignedEmployeeId}",
             task.Id, request.ProjectId, request.AssignedEmployeeId);
 
+        await _auditService.LogAsync(
+            AuditAction.Created,
+            nameof(TaskItem),
+            task.Id,
+            new { task.Title, task.ProjectId, task.AssignedEmployeeId, Priority = task.Priority.ToString() },
+            cancellationToken: cancellationToken);
+
         return await GetByIdAsync(task.Id, cancellationToken);
     }
 
@@ -278,6 +288,13 @@ public class TaskService : ITaskService
         await _context.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Updated task {TaskId}", id);
+
+        await _auditService.LogAsync(
+            AuditAction.Updated,
+            nameof(TaskItem),
+            id,
+            new { task.Title, task.AssignedEmployeeId, task.DueDate, Priority = task.Priority.ToString() },
+            cancellationToken: cancellationToken);
 
         return await GetByIdAsync(id, cancellationToken);
     }
@@ -336,6 +353,23 @@ public class TaskService : ITaskService
             "Task {TaskId} moved from {FromStatus} to {ToStatus} by user {ActorId}",
             id, from, to, _currentUser.UserId);
 
+        // The status change is THE business event this system exists to track,
+        // so both endpoints of the transition are recorded. "Moved to Done"
+        // alone cannot answer whether the task was reopened first.
+        await _auditService.LogAsync(
+            AuditAction.StatusChanged,
+            nameof(TaskItem),
+            id,
+            new
+            {
+                FromStatus = from.ToString(),
+                ToStatus = to.ToString(),
+                task.ProjectId,
+                task.AssignedEmployeeId,
+                task.CompletedAt
+            },
+            cancellationToken: cancellationToken);
+
         return await GetByIdAsync(id, cancellationToken);
     }
 
@@ -349,6 +383,13 @@ public class TaskService : ITaskService
         await _context.SaveChangesAsync(cancellationToken);
 
         _logger.LogWarning("Deleted task {TaskId} by user {ActorId}", id, _currentUser.UserId);
+
+        await _auditService.LogAsync(
+            AuditAction.Deleted,
+            nameof(TaskItem),
+            id,
+            new { task.Title, task.ProjectId, Status = task.Status.ToString() },
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
